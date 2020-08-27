@@ -827,3 +827,315 @@ public class HomeController {
 }
 ```
 
+
+
+## 7.后端接口统一返回值
+
+
+
+### 7.1.实体类默认校验
+
+lombok包可以减少写get set
+
+```xml
+<!--lombok依赖包，简化类。非必须导入-->
+<dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <optional>true</optional>
+</dependency>
+```
+
+
+
+新增User实体模型
+
+```java
+package com.wenjie.esblog.pojo;
+
+import lombok.Data;
+
+import java.io.Serializable;
+import java.util.List;
+
+import javax.persistence.Entity;
+import javax.persistence.FetchType;
+import javax.persistence.GeneratedValue;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.JoinTable;
+import javax.persistence.ManyToMany;
+import javax.persistence.Table;
+import javax.validation.constraints.NotNull;
+import javax.validation.constraints.Size;
+
+@Data
+@Entity
+@Table(name = "user_t")
+public class User implements Serializable {
+   private static final long serialVersionUID = -3320971805590503443L;
+   @Id
+   @GeneratedValue
+   @NotNull(message = "用户id不能为空")
+   private long id;
+
+   @NotNull(message = "用户账号不能为空")
+   @Size(min = 6, max = 11, message = "账号长度必须是6-11个字符")
+   private String username;
+
+   @NotNull(message = "用户密码不能为空")
+   @Size(min = 6, max = 11, message = "密码长度必须是6-16个字符")
+   private String password;
+
+   private String salt;
+```
+
+
+
+### 7.2. 统一响应格式定义
+
+
+
+```java
+package com.wenjie.esblog.pojo;
+
+import lombok.Getter;
+
+@Getter
+public class ResultVO<T> {
+
+    /**
+     * 状态码，比如1000代表响应成功
+     */
+    private int code;
+    /**
+     * 响应信息，用来说明响应情况
+     */
+    private String msg;
+    /**
+     * 响应的具体数据
+     */
+    private T data;
+
+    public ResultVO(T data) {
+        this(ResultCode.SUCCESS, data);
+    }
+
+    public ResultVO(ResultCode resultCode, T data) {
+        this.code = resultCode.getCode();
+        this.msg = resultCode.getMsg();
+        this.data = data;
+    }
+    
+}
+```
+
+
+
+### 7.3. 自定义统一响应编码
+
+
+
+```java
+package com.wenjie.esblog.pojo;
+
+import lombok.Getter;
+
+@Getter
+public enum ResultCode {
+
+    SUCCESS(1000, "操作成功"),
+
+    FAILED(1001, "响应失败"),
+
+    VALIDATE_FAILED(1002, "参数校验失败"),
+
+    ERROR(5000, "未知错误");
+
+    private int code;
+    private String msg;
+
+    ResultCode(int code, String msg) {
+        this.code = code;
+        this.msg = msg;
+    }
+}
+```
+
+
+
+### 7.4. 自定义统一接口异常响应格式
+
+
+
+```java
+package com.wenjie.esblog.pojo;
+
+import lombok.Getter;
+
+@Getter
+public class APIException extends RuntimeException {
+
+    private int code;
+    private String msg;
+
+    public APIException() {
+        this(1001, "接口错误");
+    }
+
+    public APIException(String msg) {
+        this(1001, msg);
+    }
+
+    public APIException(int code, String msg) {
+        super(msg);
+        this.code = code;
+        this.msg = msg;
+    }
+}
+```
+
+
+
+### 7.5.自定义统一异常处理类
+
+
+
+```java
+package com.wenjie.esblog.utils;
+
+import com.wenjie.esblog.pojo.APIException;
+import com.wenjie.esblog.pojo.ResultCode;
+import com.wenjie.esblog.pojo.ResultVO;
+import org.springframework.validation.ObjectError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+@RestControllerAdvice
+public class ExceptionControllerAdvice {
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResultVO<String> MethodArgumentNotValidExceptionHandler(MethodArgumentNotValidException e) {
+        // 从异常对象中拿到ObjectError对象
+        ObjectError objectError = e.getBindingResult().getAllErrors().get(0);
+        // 然后提取错误提示信息进行返回
+        //return objectError.getDefaultMessage();
+        // 注意哦，这里返回类型是自定义响应体
+        return new ResultVO<>(ResultCode.VALIDATE_FAILED, objectError.getDefaultMessage());
+    }
+
+    @ExceptionHandler(APIException.class)
+    public  ResultVO<String> APIExceptionHandler(APIException e) {
+        //return e.getMsg();
+        // 注意哦，这里返回类型是自定义响应体
+        return new ResultVO<>(ResultCode.FAILED, e.getMsg());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public  ResultVO<String> ExceptionHandler(Exception e) {
+        //return e.getMsg();
+        // 注意哦，这里返回类型是自定义响应体
+        return new ResultVO<>(ResultCode.FAILED, e.getMessage()+"通用异常数据");
+    }
+
+}
+```
+
+
+
+### 7.6.自定义统一响应处理类
+
+
+
+```java
+package com.wenjie.esblog.utils;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjie.esblog.pojo.APIException;
+import com.wenjie.esblog.pojo.ResultVO;
+import org.springframework.core.MethodParameter;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.server.ServerHttpRequest;
+import org.springframework.http.server.ServerHttpResponse;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
+
+@RestControllerAdvice(basePackages = {"com.wenjie.esblog.controller"}) // 注意哦，这里要加上需要扫描的包
+public class ResponseControllerAdvice implements ResponseBodyAdvice<Object> {
+    @Override
+    public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
+        // false;
+        // 如果接口返回的类型本身就是ResultVO那就没有必要进行额外的操作，返回false
+        return !returnType.getGenericParameterType().equals(ResultVO.class);
+    }
+
+    @Override
+    public Object beforeBodyWrite(Object data, MethodParameter returnType, MediaType selectedContentType, Class<? extends HttpMessageConverter<?>> selectedConverterType, ServerHttpRequest request, ServerHttpResponse response) {
+        //return null;
+
+        // String类型不能直接包装，所以要进行些特别的处理
+        if (returnType.getGenericParameterType().equals(String.class)) {
+            ObjectMapper objectMapper = new ObjectMapper();
+            try {
+                // 将数据包装在ResultVO里后，再转换为json字符串响应给前端
+                return objectMapper.writeValueAsString(new ResultVO<>(data));
+            } catch (JsonProcessingException e) {
+                throw new APIException("返回String类型错误");
+            }
+        }
+        // 将原本的数据包装在ResultVO里
+        return new ResultVO<>(data);
+    }
+}
+```
+
+
+
+### 7.7.调用测试
+
+
+
+```java
+package com.wenjie.esblog.controller;
+
+import com.wenjie.esblog.pojo.User;
+import com.wenjie.esblog.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import javax.validation.Valid;
+
+@RestController
+@RequestMapping("user")
+public class UserController {
+
+    @Autowired
+    private UserService userService;
+
+
+    @PostMapping("/addUser")
+    public String addUser(@RequestBody @Valid User user) {
+
+         userService.saveUser(user);
+         return "success";
+    }
+
+    @GetMapping("/getUser")
+    public User getUser() throws Exception {
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("12345678");
+        user.setPassword("12345678");
+        user.setSalt("123@qq.com");
+
+        //throw new APIException("123123");
+        return  user;
+        //return user;
+    }
+
+}
+```
+

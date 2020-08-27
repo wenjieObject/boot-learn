@@ -25,7 +25,7 @@ public class ShiroConfig {
         shiroFilterFactoryBean.setLoginUrl("/login");
         //shiroFilterFactoryBean.setUnauthorizedUrl("/unauthc");
         //shiroFilterFactoryBean.setSuccessUrl("/home/index");
-
+        filterChainDefinitionMap.put("/user/*", "anon");
         filterChainDefinitionMap.put("/doLogin", "anon");
         filterChainDefinitionMap.put("/**", "authc");
 //        filterChainDefinitionMap.put("/authc/index", "authc");
