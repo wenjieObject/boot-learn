@@ -1139,3 +1139,418 @@ public class UserController {
 }
 ```
 
+
+
+
+
+## 8.jpa配置多个数据源
+
+
+
+```bash
+├── config
+│   ├── DataSourceConfig.java
+│   ├── MasterConfig.java
+│   ├── SlaveConfig.java
+├── controller
+│   ├── JpaMultidbController.java
+├── master
+│   ├── pojo
+│   ├── ├── Student.java
+│   ├── repository
+│   ├── ├── StudentDao.java
+├── slave
+│   ├── pojo
+│   ├── ├── Teacher.java
+│   ├── repository
+│   ├── ├── TeacherDao.java
+├── MultidbApplication.java
+
+```
+
+### 8.1 配置文件
+
+新建两个数据库，主数据源product，其他数据源customer
+
+```yaml
+spring:
+  datasource:
+    master:
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://127.0.0.1:3306/product?serverTimezone=UTC
+      username: root
+      password: root
+    slave:
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://127.0.0.1:3306/customer?serverTimezone=UTC
+      username: root
+      password: root
+
+  jpa:
+    generate-ddl: true
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+```
+
+pom配置文件
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-jpa</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-devtools</artifactId>
+    <scope>runtime</scope>
+</dependency>
+<dependency>
+    <groupId>mysql</groupId>
+    <artifactId>mysql-connector-java</artifactId>
+    <scope>runtime</scope>
+</dependency>
+```
+
+
+
+### 8.2. 配置代码config
+
+
+
+主配置文件代码
+
+```java
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+
+import javax.sql.DataSource;
+
+@Configuration
+public class DataSourceConfig {
+    //master库
+    @Primary
+    @Bean(name = "masterDataSourceProperties")
+    @Qualifier("masterDataSourceProperties")
+    @ConfigurationProperties(prefix = "spring.datasource.master")
+    public DataSourceProperties masterDataSourceProperties() {
+        return new DataSourceProperties();
+    }
+
+    @Primary
+    @Bean(name = "masterDataSource")
+    @Qualifier("masterDataSource")
+    @ConfigurationProperties(prefix = "spring.datasource.master")
+    public DataSource masterDataSource(@Qualifier("masterDataSourceProperties") DataSourceProperties dataSourceProperties) {
+        return dataSourceProperties.initializeDataSourceBuilder().build();
+    }
+
+    //slave库
+    @Bean(name = "slaveDataSourceProperties")
+    @Qualifier("slaveDataSourceProperties")
+    @ConfigurationProperties(prefix = "spring.datasource.slave")
+    public DataSourceProperties slaveDataSourceProperties() {
+        return new DataSourceProperties();
+    }
+
+    @Bean(name = "slaveDataSource")
+    @Qualifier("slaveDataSource")
+    @ConfigurationProperties(prefix = "spring.datasource.slave")
+    public DataSource slaveDataSource(@Qualifier("slaveDataSourceProperties") DataSourceProperties dataSourceProperties) {
+        return dataSourceProperties.initializeDataSourceBuilder().build();
+    }
+
+}
+```
+
+
+
+--MasterConfig配置
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateProperties;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateSettings;
+import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
+import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+
+import javax.annotation.Resource;
+import javax.persistence.EntityManager;
+import javax.sql.DataSource;
+import java.util.Map;
+
+@Configuration
+@EnableTransactionManagement
+@EnableJpaRepositories(
+        entityManagerFactoryRef = "masterEntityManagerFactory",
+        transactionManagerRef = "masterTransactionManager",
+        basePackages = {"com.wenjie.multidb.master"})
+public class MasterConfig {
+    @Autowired
+    private HibernateProperties hibernateProperties;
+    @Resource
+    @Qualifier("masterDataSource")
+    private DataSource masterDataSource;
+
+    @Primary
+    @Bean(name = "masterEntityManager")
+    public EntityManager entityManager(EntityManagerFactoryBuilder builder) {
+        return masterEntityManagerFactory(builder).getObject().createEntityManager();
+    }
+
+    @Resource
+    private JpaProperties jpaProperties;
+
+
+    /**
+     * 设置实体类所在位置
+     */
+    @Primary
+    @Bean(name = "masterEntityManagerFactory")
+    public LocalContainerEntityManagerFactoryBean masterEntityManagerFactory(EntityManagerFactoryBuilder builder) {
+
+        Map<String, Object> properties = hibernateProperties.determineHibernateProperties(
+                jpaProperties.getProperties(), new HibernateSettings());
+        return builder
+                .dataSource(masterDataSource)
+                .packages("com.wenjie.multidb.master")
+                .persistenceUnit("masterPersistenceUnit")
+                .properties(properties)
+                .build();
+    }
+
+    @Primary
+    @Bean(name = "masterTransactionManager")
+    public PlatformTransactionManager masterTransactionManager(EntityManagerFactoryBuilder builder) {
+        return new JpaTransactionManager(masterEntityManagerFactory(builder).getObject());
+    }
+}
+```
+
+
+
+--从配置文件SlaveConfig
+
+
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateProperties;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernateSettings;
+import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
+import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+
+import javax.annotation.Resource;
+import javax.persistence.EntityManager;
+import javax.sql.DataSource;
+import java.util.Map;
+
+
+@Configuration
+@EnableTransactionManagement
+@EnableJpaRepositories(
+        entityManagerFactoryRef = "slaveEntityManagerFactory",
+        transactionManagerRef = "slaveTransactionManager",
+        basePackages = {"com.wenjie.multidb.slave"})//repository的目录
+public class SlaveConfig {
+
+    @Autowired
+    @Qualifier("slaveDataSource")
+    private DataSource slaveDataSource;
+
+    @Autowired
+    private HibernateProperties hibernateProperties;
+
+    @Bean(name = "slaveEntityManager")
+    public EntityManager entityManager(EntityManagerFactoryBuilder builder) {
+        return slaveEntityManagerFactory(builder).getObject().createEntityManager();
+    }
+
+    @Resource
+    private JpaProperties jpaProperties;
+
+
+    @Bean(name = "slaveEntityManagerFactory")
+    public LocalContainerEntityManagerFactoryBean slaveEntityManagerFactory(EntityManagerFactoryBuilder builder) {
+
+        Map<String, Object> properties = hibernateProperties.determineHibernateProperties(
+                jpaProperties.getProperties(), new HibernateSettings());
+        return builder
+                .dataSource(slaveDataSource)
+                .packages("com.wenjie.multidb.slave")//实体类的目录
+                .persistenceUnit("slavePersistenceUnit")
+                .properties(properties)
+                .build();
+    }
+
+    @Bean(name = "slaveTransactionManager")
+    PlatformTransactionManager slaveTransactionManager(EntityManagerFactoryBuilder builder) {
+        return new JpaTransactionManager(slaveEntityManagerFactory(builder).getObject());
+    }
+
+}
+```
+
+### 8.3.DAO层代码
+
+master是主数据库对应包，slave是多数据源对应包
+
+pojo下写数据库实体类
+
+repository下继承JpaRepository
+
+
+
+```java
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.Id;
+
+@Entity
+public class Student {
+
+    @Id
+    @GeneratedValue
+    private int id;
+
+    private String name;
+
+    private int age;
+
+    private int grade;
+
+    public Student() {
+    }
+
+    public Student(String name, int age, int grade) {
+        this.name = name;
+        this.age = age;
+        this.grade = grade;
+    }
+
+    @Override
+    public String toString() {
+        return "Student{" +
+                "id=" + id +
+                ", name='" + name + '\'' +
+                ", age=" + age +
+                ", grade=" + grade +
+                '}';
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+
+    public int getGrade() {
+        return grade;
+    }
+
+    public void setGrade(int grade) {
+        this.grade = grade;
+    }
+}
+```
+
+
+
+```java
+import com.wenjie.multidb.master.pojo.Student;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface StudentDao extends JpaRepository<Student, Integer> {
+
+
+}
+```
+
+
+
+### 8.4.控制器测试
+
+```java
+import com.wenjie.multidb.master.pojo.Student;
+import com.wenjie.multidb.slave.pojo.Teacher;
+import com.wenjie.multidb.slave.repository.TeacherDao;
+import com.wenjie.multidb.master.repository.StudentDao;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class JpaMultidbController {
+
+    @Autowired
+    private StudentDao studentDao;
+
+    @Autowired
+    private TeacherDao teacherDao;
+
+    @GetMapping("/list")
+    public void list() {
+        System.out.println(studentDao.findAll());
+        System.out.println(teacherDao.findAll());
+    }
+
+    @GetMapping("/add")
+    @Transactional
+    public String add(){
+        Student student=new Student("name",12,0);
+
+        studentDao.save(student);
+
+        if(true){
+            throw new RuntimeException("123321");
+        }
+
+
+        Teacher teacher=new Teacher("name","tt","cc");
+        teacherDao.save(teacher);
+        return "success";
+    }
+
+}
+```
