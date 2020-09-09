@@ -422,6 +422,28 @@ https://docs.spring.io/spring-data/jpa/docs/2.2.x/reference/html/#repositories.q
 
 
 
+### 3.0.1 自定义sql和分页
+
+
+
+```java
+@Query(value = "SELECT * FROM ssm_service_all WHERE IN_DATA like %?1% and LOG_TIME1>?2 and  LOG_TIME1<?3 ",
+        countQuery = "SELECT count(*) FROM ssm_service_all WHERE IN_DATA like %?1% and LOG_TIME1>?2 and  LOG_TIME1<?3",
+        nativeQuery = true)
+Page<SsmServiceAll> findSsmServiceAlls(String inData,String logTimeBegin ,String logTimeEnd, Pageable pageable);
+
+
+---------------------------------
+        List<SsmServiceAll> findSsmServiceAlls(String inData, String logTimeBegin , String logTimeEnd, Pageable pageable){
+
+        //1.分页
+        pageable = PageRequest.of(1,10);
+        return ssmServiceAllDao.findSsmServiceAlls(inData,logTimeBegin,logTimeEnd,pageable).toList();
+
+    }
+
+```
+
 自定义sql
 
 ```java
@@ -1554,3 +1576,9 @@ public class JpaMultidbController {
 
 }
 ```
+
+
+
+## 9.mybatis配置多个数据源
+
+https://mp.weixin.qq.com/s?__biz=MzUzMTA2NTU2Ng==&mid=2247498339&idx=3&sn=b7ee06e27e5cf38f6a3278d2dec24899&chksm=fa4a85d2cd3d0cc496e4960b906efaeecc42e7e1552ea36708e51520c06103cc88e49f4558b1&scene=126&sessionid=1599625930&key=f3a4eda7328a3025bfc8bbf8ab93314dbc4e79680783bf47d22a37aef7b767fda740bf0fd833c72f84892d249e633b7fac5e4f5a806a47f9750d4174fdf83d8585349736c1550ee36205cf3ec00c554f7b4cc8dc6e0c8f5c263a7facb5854a8dfff93878cbbe000bff8e106a13a8de1f8c727e8fafde491bbb688ed622785716&ascene=1&uin=MTQzNjkwNzI2Mw%3D%3D&devicetype=Windows+10+x64&version=62090529&lang=zh_CN&exportkey=AY%2BGtEfYp%2Fa2T3wnXCvTZyc%3D&pass_ticket=eFspk%2BwGRw2AnnyUZlVGI7jk%2FSAVS6MD9fRj9thdZT61fkrqCrPXZOLwQyHahQ1c&wx_header=0
